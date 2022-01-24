@@ -1,0 +1,530 @@
+GET _search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+## Indicies
+# Get indices
+GET /_cat/indices?v
+GET /_cat/indices/hdb-*?v
+
+# Delete indicies
+DELETE /hdb-resale-1990-1999
+
+## Index pattern
+# Create basic index pattern
+PUT /hdb-resale-2017-2021
+{
+  "settings": {
+    "index": {
+      "number_of_shards": 1
+    }
+  }
+}
+
+## geo_match enrichment policy
+GET /_enrich/policy
+DELETE /_enrich/policy/region_lookup
+PUT /_enrich/policy/region_lookup
+{
+  "geo_match": {
+    "indices": "hdb-geojson-map",
+    "match_field": "coordinates",
+    "enrich_fields": [ "coordinates" ]
+  }
+}
+POST /_enrich/policy/region_lookup/_execute
+
+## Maps GeoJson
+POST _ingest/pipeline/_simulate
+{
+  "type": "FeatureCollection",
+  "crs": { 
+    "type": "name", 
+    "properties": { 
+      "name": "urn:ogc:def:crs:OGC:1.3:CRS84" 
+    }
+  },
+  "features": [
+    { 
+      "type": "Feature", 
+      "properties": { 
+        "Name": "kml_1", 
+        "Description": "<center><table><tr><th colspan='2' align='center'><em>Attributes<\/em><\/th><\/tr><tr bgcolor=\"#E3E3F3\"> <th>NAME<\/th> <td>CENTRAL EXPRESSWAY<\/td> <\/tr><tr bgcolor=\"\"> <th>FOLDERPATH<\/th> <td>Layers\/Expressway_Sliproad<\/td> <\/tr><tr bgcolor=\"#E3E3F3\"> <th>SYMBOLID<\/th> <td>2<\/td> <\/tr><tr bgcolor=\"\"> <th>INC_CRC<\/th> <td>0C08DFFA475DDCCD<\/td> <\/tr><tr bgcolor=\"#E3E3F3\"> <th>FMEL_UPD_D<\/th> <td>20191008154530<\/td> <\/tr><\/table><\/center>" 
+      }, 
+      "geometry": { 
+        "type": "LineString", 
+        "coordinates": [ 
+          [ 103.858333937416006, 1.3559533317473, 0.0 ], 
+          [ 103.858215578815006, 1.355816304599, 0.0 ], 
+          [ 103.858116866331002, 1.35575566979974, 0.0 ], 
+          [ 103.857992826192003, 1.35571405765487, 0.0 ], 
+          [ 103.85787572257, 1.35572105501446, 0.0 ], 
+          [ 103.857781079930007, 1.35577301170758, 0.0 ], 
+          [ 103.857716551156997, 1.35585094776557, 0.0 ], 
+          [ 103.857586091965004, 1.35610979081088, 0.0 ] 
+        ] 
+      }
+    }
+  ]
+}
+
+## Ingest Pipeline
+# Get ingest pipeline
+GET _ingest/pipeline/hdb-resale*
+
+# Delete ingest pipeline
+DELETE _ingest/pipeline/hdb-resale*
+
+# Test pipeline
+POST _ingest/pipeline/_simulate
+{
+  "pipeline": {
+    "description" : "HDB ingest script created by Thad",
+    "version": 1,
+    "processors": [
+      {
+        "csv": {
+          "field": "message",
+          "target_fields": [
+            "month",
+            "town",
+            "flat_type",
+            "block",
+            "street_name",
+            "storey_range",
+            "floor_area_sqm",
+            "flat_model",
+            "lease_commence_date",
+            "remaining_lease",
+            "resale_price"
+          ],
+          "ignore_missing": false
+        }
+      },
+      {
+        "convert": {
+          "field": "floor_area_sqm",
+          "type": "double",
+          "ignore_missing": true
+        }
+      },
+      {
+        "convert": {
+          "field": "resale_price",
+          "type": "double",
+          "ignore_missing": true
+        }
+      },
+      {
+        "script": {
+          "lang": "painless",
+          "params": {
+            "splitYear": " years",
+            "tokenLength": 2,
+            "splitMonth": " month",
+            "empty": ""
+          },
+          "source": """
+            ctx['year'] = ctx['month'].substring(0,4);
+            ctx['month_normalised'] = ctx['month'].substring(5,7);
+            
+            def tokens_year = ctx['remaining_lease'].splitOnToken(params['splitYear']);
+            
+            def remaining_year = Integer.parseInt(tokens_year[0]);
+            def remaining_month = 0;
+            
+            if (tokens_year.length == params['tokenLength'] && tokens_year[1] != params['empty']) {
+              def tokens_month = tokens_year[1].splitOnToken(params['splitMonth']);
+              def length = tokens_month[0].length();
+              
+              remaining_month = Integer.parseInt(tokens_month[0].substring(1, length));
+            }
+            
+            ctx['years_remaining'] = remaining_month >= 6 ? remaining_year + 1 : remaining_year;
+          """
+        }
+      }
+    ]
+  },
+  "docs": [
+    {
+      "_source": {
+        "message": "2017-01,ANG MO KIO,2 ROOM,406,ANG MO KIO AVE 10,10 TO 12,44,Improved,1979,61 years 04 months,232000.80"
+      }
+    },
+    {
+      "_source": {
+        "message": "2017-01,ANG MO KIO,3 ROOM,233,ANG MO KIO AVE 3,10 TO 12,67,New Generation,1977,59 years 08 months,295000"
+      }
+    },
+    {
+      "_source": {
+        "message": "2017-01,ANG MO KIO,3 ROOM,233,ANG MO KIO AVE 3,10 TO 12,67,New Generation,1977,59 years,295000"
+      }
+    },
+    {
+      "_source": {
+        "message": "2019-06,SENGKANG,5 ROOM,188D,RIVERVALE DR,04 TO 06,115,Improved,2000,80 years 01 month,382000"
+      }
+    },
+    {
+      "_source": {
+        "message": "2019-06,SENGKANG,5 ROOM,188D,RIVERVALE DR,04 TO 06,115,Improved,2000,382000"
+      }
+    }
+  ]
+}
+
+# Create ingest pipeline
+PUT _ingest/pipeline/hdb-resale-2017-2021-pipeline
+{
+  "description" : "HDB ingest script created by Thad",
+  "version": 1,
+  "processors": [
+    {
+      "csv": {
+        "field": "message",
+        "target_fields": [
+          "month",
+          "town",
+          "flat_type",
+          "block",
+          "street_name",
+          "storey_range",
+          "floor_area_sqm",
+          "flat_model",
+          "lease_commence_date",
+          "remaining_lease",
+          "resale_price"
+        ],
+        "ignore_missing": false
+      }
+    },
+    {
+      "convert": {
+        "field": "floor_area_sqm",
+        "type": "double",
+        "ignore_missing": true
+      }
+    },
+    {
+      "convert": {
+        "field": "resale_price",
+        "type": "double",
+        "ignore_missing": true
+      }
+    },
+    {
+      "script": {
+        "lang": "painless",
+        "params": {
+          "splitYear": " years",
+          "tokenLength": 2,
+          "splitMonth": " month",
+          "empty": ""
+        },
+        "source": """
+          ctx['year'] = ctx['month'].substring(0,4);
+          ctx['month_normalised'] = ctx['month'];
+          
+          //def tokens_year = ctx['remaining_lease'].splitOnToken(params['splitYear']);
+          
+          //def remaining_year = Integer.parseInt(tokens_year[0]);
+          //def remaining_month = 0;
+          //
+          //if (tokens_year.length == params['tokenLength'] && tokens_year[1] != params['empty']) {
+          //  def tokens_month = tokens_year[1].splitOnToken(params['splitMonth']);
+          //  def length = tokens_month[0].length();
+            
+          //  remaining_month = Integer.parseInt(tokens_month[0].substring(1, length));
+          //}
+          
+          //ctx['years_remaining'] = remaining_month >= 6 ? remaining_year + 1 : remaining_year;
+          ctx['years_remaining'] = 99 + Integer.parseInt(ctx['lease_commence_date']) - Integer.parseInt(ctx['year']);
+        """
+      }
+    }
+  ]
+}
+PUT _ingest/pipeline/hdb-resale-2012-2014-pipeline
+{
+  "description" : "HDB ingest script created by Thad",
+  "version": 1,
+  "processors": [
+    {
+      "csv": {
+        "field": "message",
+        "target_fields": [
+          "month",
+          "town",
+          "flat_type",
+          "block",
+          "street_name",
+          "storey_range",
+          "floor_area_sqm",
+          "flat_model",
+          "lease_commence_date",
+          "resale_price"
+        ],
+        "ignore_missing": false
+      }
+    },
+    {
+      "convert": {
+        "field": "floor_area_sqm",
+        "type": "double",
+        "ignore_missing": true
+      }
+    },
+    {
+      "convert": {
+        "field": "resale_price",
+        "type": "double",
+        "ignore_missing": true
+      }
+    },
+    {
+      "script": {
+        "lang": "painless",
+        "source": """
+          ctx['year'] = ctx['month'].substring(0,4);
+          ctx['month_normalised'] = ctx['month'];
+          
+          ctx['years_remaining'] = 99 + Integer.parseInt(ctx['lease_commence_date']) - Integer.parseInt(ctx['year']);
+        """
+      }
+    }
+  ]
+}
+PUT _ingest/pipeline/hdb-geojson-map-pipeline
+{
+  "description": "Reverse geocode longitude-latitude to combined statistical area",
+  "processors": [
+    {
+      "enrich": {
+        "field": "coordinates",
+        "policy_name": "region_lookup",
+        "target_field": "PLN_AREA_NAME",
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "description": "Lookup the region identifier"
+      }
+    }
+  ]
+}
+
+## Index Mapping
+# Get index mapping
+GET /hdb-resale*/_mapping
+GET /hdb-geo*/_mapping
+
+# Create index mapping
+PUT /hdb-resale-2017-2021/_mapping
+{
+  "properties" : {
+    "block" : {
+      "type" : "keyword"
+    },
+    "flat_model" : {
+      "type" : "keyword"
+    },
+    "flat_type" : {
+      "type" : "keyword"
+    },
+    "floor_area_sqm" : {
+      "type" : "double"
+    },
+    "lease_commence_date" : {
+      "type" : "keyword"
+    },
+    "message" : {
+      "type" : "text",
+      "fields" : {
+        "keyword" : {
+          "type" : "keyword",
+          "ignore_above" : 256
+        }
+      }
+    },
+    "month" : {
+      "type" : "date"
+    },
+    "month_normalised" : {
+      "type" : "date"
+    },
+    "remaining_lease": {
+      "type": "keyword"
+    },
+    "resale_price" : {
+      "type" : "double"
+    },
+    "storey_range" : {
+      "type" : "keyword"
+    },
+    "street_name" : {
+      "type" : "keyword"
+    },
+    "town" : {
+      "type" : "keyword"
+    },
+    "year" : {
+      "type" : "keyword"
+    },
+    "years_remaining" : {
+      "type" : "long"
+    }
+  }
+}
+PUT /hdb-resale-1990-1999/_mapping
+{
+  "properties" : {
+    "block" : {
+      "type" : "keyword"
+    },
+    "flat_model" : {
+      "type" : "keyword"
+    },
+    "flat_type" : {
+      "type" : "keyword"
+    },
+    "floor_area_sqm" : {
+      "type" : "double"
+    },
+    "lease_commence_date" : {
+      "type" : "keyword"
+    },
+    "message" : {
+      "type" : "text",
+      "fields" : {
+        "keyword" : {
+          "type" : "keyword",
+          "ignore_above" : 256
+        }
+      }
+    },
+    "month" : {
+      "type" : "date"
+    },
+    "month_normalised" : {
+      "type" : "date"
+    },
+    "resale_price" : {
+      "type" : "double"
+    },
+    "storey_range" : {
+      "type" : "keyword"
+    },
+    "street_name" : {
+      "type" : "keyword"
+    },
+    "town" : {
+      "type" : "keyword"
+    },
+    "year" : {
+      "type" : "keyword"
+    },
+    "years_remaining" : {
+      "type" : "long"
+    }
+  }
+}
+PUT /hdb-geojson-map/_mapping
+{
+  "mappings": {
+    "_doc": {
+      "_meta": {
+        "created_by": "file-data-visualizer"
+      },
+      "properties": {
+        "Description": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "Name": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "coordinates": {
+          "type": "geo_shape"
+        },
+        "PLN_AREA_NAME": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+## Reindexing
+POST hdb-resale-2017-2021/_update_by_query?pipeline=hdb-resale-2017-2021-pipeline
+POST hdb-geojson-map/_update_by_query?pipeline=hdb-geojson-map-pipeline
+POST _reindex
+{
+  "source": {
+    "index": "hdb-resale-1990-1999"
+  },
+  "dest": {
+    "index": "hdb-resale-1990-1999",
+    "op_type": "index",
+    "pipeline": "hdb-resale-1990-1999-pipeline"
+  }
+}
+
+## Search
+# Search document in indices
+GET hdb-resale-1990-1999,hdb-resale-2000-2012,hdb-resale-2012-2014,hdb-resale-2015-2016,hdb-resale-2017-2021/_search
+{
+  "size": 1,
+  "query": {
+    "match_all": {}
+  }
+}
+GET hdb-resale-2000-2012/_search
+{
+  "size": 10,
+  "query": {
+    "match_all": {}
+  }
+}
+GET hdb-geo*/_search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+GET hdb-resale-*/_search
+{
+  "query": {
+    "terms": {
+      "_id": [ "D2LrrX0BZLE6I7mG-uN5" ] 
+    }
+  }
+}
+
+## Count
+# Count document in indices
+GET hdb-resale*/_count
+{
+  "query": {
+    "match_all": {}
+  }
+}
